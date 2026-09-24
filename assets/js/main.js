@@ -1,11 +1,65 @@
 /**
  * 社区便民留言板 - 前端脚本
  */
-document.addEventListener('DOMContentLoaded', function() {
-    // 滚动信息复制实现无缝滚动
+
+/**
+ * 通用请求方法
+ *
+ * GET 请求（不改变数据）在网络失败时自动重试，重试沿用原 url 中的全部
+ * 查询参数，因此当前筛选/排序/分页/定位条件不会丢失。
+ *
+ * POST 请求会改变数据，网络失败时无法确认服务端是否已处理，故不自动
+ * 重试，由调用方提示用户手动重试，避免重复收藏、重复提交。
+ *
+ * @param {string} url 请求地址
+ * @param {object} options fetch 配置
+ * @param {number} retries 剩余重试次数（默认按请求方法决定）
+ * @returns {Promise<Response>}
+ */
+function fetchWithRetry(url, options = {}, retries) {
+    const method = (options.method || 'GET').toUpperCase();
+    if (retries === undefined) {
+        retries = method === 'GET' ? 2 : 0;
+    }
+    return fetch(url, options).catch(error => {
+        if (retries > 0) {
+            // 重试仍使用原 url（含当前筛选/排序/分页等查询条件），不改变查看条件
+            return fetchWithRetry(url, options, retries - 1);
+        }
+        throw error;
+    });
+}
+
+/**
+ * 初始化无缝滚动
+ *
+ * 仅在内容宽度超出容器时复制一份用于无缝衔接；通过 data-cloned 保证
+ * 同一批内容只复制一次，避免 bfcache 恢复或重复初始化时标题重复、错位。
+ */
+function initScrollContent() {
     const scrollContent = document.getElementById('scrollContent');
-    if (scrollContent) {
+    if (!scrollContent || scrollContent.dataset.cloned === '1') return;
+
+    const wrapper = scrollContent.parentElement;
+    const needsScroll = wrapper && scrollContent.scrollWidth > wrapper.clientWidth;
+
+    if (needsScroll) {
         scrollContent.innerHTML += scrollContent.innerHTML;
+        scrollContent.classList.add('is-scrolling');
+    }
+    scrollContent.dataset.cloned = '1';
+}
+
+document.addEventListener('DOMContentLoaded', initScrollContent);
+
+// 视口变化后重新判断是否需要无缝滚动
+window.addEventListener('resize', initScrollContent);
+
+// 从 bfcache 恢复页面（浏览器前进/后退）时强制重新加载，
+// 防止删除、审核后短暂看到旧内容，也避免滚动内容被再次复制
+window.addEventListener('pageshow', function(event) {
+    if (event.persisted) {
+        window.location.reload();
     }
 });
 
@@ -31,7 +85,7 @@ function toggleFavorite(event, btn) {
     formData.append('message_id', messageId);
     formData.append('action', 'toggle');
 
-    fetch('api/favorite.php', {
+    fetchWithRetry('api/favorite.php', {
         method: 'POST',
         body: formData
     })
@@ -267,7 +321,7 @@ function submitReport() {
     formData.append('description', description);
     formData.append('action', 'submit');
 
-    fetch('api/report.php', {
+    fetchWithRetry('api/report.php', {
         method: 'POST',
         body: formData
     })

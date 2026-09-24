@@ -42,7 +42,7 @@ $countStmt->execute($params);
 $total = $countStmt->fetchColumn();
 $totalPages = ceil($total / $pageSize);
 
-$sql = "SELECT * FROM messages $where ORDER BY created_at DESC LIMIT $pageSize OFFSET $offset";
+$sql = "SELECT * FROM messages $where ORDER BY created_at DESC, id DESC LIMIT $pageSize OFFSET $offset";
 $stmt = $db->prepare($sql);
 $stmt->execute($params);
 $messages = $stmt->fetchAll();
@@ -127,12 +127,12 @@ include __DIR__ . '/header.php';
                         <td class="td-actions">
                             <button class="btn btn-xs btn-info" onclick="viewMessage(<?= $msg['id'] ?>)">查看</button>
                             <?php if ($msg['status'] != 1): ?>
-                            <button class="btn btn-xs btn-success" onclick="auditMessage(<?= $msg['id'] ?>, 1)">通过</button>
+                            <button class="btn btn-xs btn-success" onclick="auditMessage(<?= $msg['id'] ?>, 1, this)">通过</button>
                             <?php endif; ?>
                             <?php if ($msg['status'] != 2): ?>
-                            <button class="btn btn-xs btn-warning" onclick="auditMessage(<?= $msg['id'] ?>, 2)">拒绝</button>
+                            <button class="btn btn-xs btn-warning" onclick="auditMessage(<?= $msg['id'] ?>, 2, this)">拒绝</button>
                             <?php endif; ?>
-                            <button class="btn btn-xs btn-danger" onclick="deleteMessage(<?= $msg['id'] ?>)">删除</button>
+                            <button class="btn btn-xs btn-danger" onclick="deleteMessage(<?= $msg['id'] ?>, this)">删除</button>
                         </td>
                     </tr>
                     <?php endforeach; ?>
@@ -171,49 +171,68 @@ include __DIR__ . '/header.php';
 </div>
 
 <script>
-function auditMessage(id, status) {
-    const action = status === 1 ? '通过' : '拒绝';
-    if (!confirm('确定要' + action + '这条留言吗？')) return;
-    fetch('api.php', {
+// 查看弹窗的请求序号：只有最后一次打开的请求允许渲染，
+// 避免接口返回较慢时旧留言内容覆盖当前查看的内容
+let viewRequestSeq = 0;
+
+function adminFetch(body, onOk) {
+    // 重试沿用同一请求；成功后通过 location.reload() 重新加载当前完整 URL，
+    // 当前 status/type/keyword/page 等查看条件全部保留
+    return fetchWithRetry('api.php', {
         method: 'POST',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'action=audit&id=' + id + '&status=' + status
+        body: body
     })
     .then(r => r.json())
     .then(data => {
         if (data.code === 0) {
-            alert('操作成功');
-            location.reload();
+            onOk(data);
         } else {
-            alert(data.msg);
+            if (confirm(data.msg + '\n是否重试？（将保留当前筛选条件）')) {
+                return adminFetch(body, onOk);
+            }
+        }
+    })
+    .catch(error => {
+        console.error('请求失败:', error);
+        if (confirm('网络错误，操作未确认完成。\n是否重试？（将保留当前筛选条件）')) {
+            return adminFetch(body, onOk);
         }
     });
 }
 
-function deleteMessage(id) {
+function auditMessage(id, status, btn) {
+    const action = status === 1 ? '通过' : '拒绝';
+    if (!confirm('确定要' + action + '这条留言吗？')) return;
+    if (btn) btn.disabled = true;
+    adminFetch('action=audit&id=' + id + '&status=' + status, function() {
+        alert('操作成功');
+        // 等接口确认成功后再回到当前筛选视图，避免界面提前变动出现旧内容
+        location.reload();
+    }).finally(() => { if (btn) btn.disabled = false; });
+}
+
+function deleteMessage(id, btn) {
     if (!confirm('确定要删除这条留言吗？此操作不可恢复！')) return;
-    fetch('api.php', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'action=delete&id=' + id
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.code === 0) {
-            alert('删除成功');
-            location.reload();
-        } else {
-            alert(data.msg);
-        }
-    });
+    if (btn) btn.disabled = true;
+    adminFetch('action=delete&id=' + id, function() {
+        alert('删除成功');
+        // 删除被接口确认后再重载当前页（携带当前筛选参数），
+        // 列表、分页与统计立刻与服务端一致，不再短暂显示已删除内容
+        location.reload();
+    }).finally(() => { if (btn) btn.disabled = false; });
 }
 
 function viewMessage(id) {
     document.getElementById('viewModal').style.display = 'flex';
     document.getElementById('modalBody').innerHTML = '加载中...';
-    fetch('api.php?action=detail&id=' + id)
+
+    // 每次打开生成新的请求序号，旧请求即使后返回也会被丢弃
+    const requestSeq = ++viewRequestSeq;
+    fetchWithRetry('api.php?action=detail&id=' + id)
     .then(r => r.json())
     .then(data => {
+        if (requestSeq !== viewRequestSeq) return; // 已切换查看其它留言，忽略旧响应
         if (data.code === 0) {
             const d = data.data;
             let html = '<div class="detail-view">';
@@ -231,10 +250,17 @@ function viewMessage(id) {
         } else {
             document.getElementById('modalBody').innerHTML = data.msg;
         }
+    })
+    .catch(error => {
+        if (requestSeq !== viewRequestSeq) return;
+        console.error('获取详情失败:', error);
+        document.getElementById('modalBody').innerHTML = '加载失败，请稍后重试';
     });
 }
 
 function closeModal() {
+    // 关闭后使在途请求失效，避免其返回后把旧内容写回弹窗
+    viewRequestSeq++;
     document.getElementById('viewModal').style.display = 'none';
 }
 

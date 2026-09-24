@@ -45,8 +45,8 @@ $sql = "SELECT r.*, m.title as message_title, m.nickname as message_nickname, m.
         FROM reports r 
         LEFT JOIN messages m ON r.message_id = m.id 
         LEFT JOIN admins a ON r.processed_by = a.id 
-        $where 
-        ORDER BY r.created_at DESC 
+        $where
+        ORDER BY r.created_at DESC, r.id DESC
         LIMIT $pageSize OFFSET $offset";
 $stmt = $db->prepare($sql);
 $stmt->execute($params);
@@ -220,13 +220,18 @@ include __DIR__ . '/header.php';
 <script>
 let pendingProcessId = null;
 let pendingProcessStatus = null;
+// 举报详情请求序号：只有最后一次查看允许渲染，防止慢响应写入旧内容
+let reportViewSeq = 0;
 
 function viewReport(id) {
     document.getElementById('reportViewModal').style.display = 'flex';
     document.getElementById('reportViewBody').innerHTML = '加载中...';
-    fetch('api.php?action=report_detail&id=' + id)
+
+    const requestSeq = ++reportViewSeq;
+    fetchWithRetry('api.php?action=report_detail&id=' + id)
     .then(r => r.json())
     .then(data => {
+        if (requestSeq !== reportViewSeq) return; // 已切换查看其它举报，忽略旧响应
         if (data.code === 0) {
             const d = data.data;
             let html = '<div class="detail-view">';
@@ -265,10 +270,17 @@ function viewReport(id) {
         } else {
             document.getElementById('reportViewBody').innerHTML = data.msg;
         }
+    })
+    .catch(error => {
+        if (requestSeq !== reportViewSeq) return;
+        console.error('获取举报详情失败:', error);
+        document.getElementById('reportViewBody').innerHTML = '加载失败，请稍后重试';
     });
 }
 
 function closeReportViewModal() {
+    // 关闭后使在途请求失效，避免旧响应返回后写回弹窗
+    reportViewSeq++;
     document.getElementById('reportViewModal').style.display = 'none';
 }
 
@@ -299,6 +311,14 @@ function closeProcessNoteModal() {
     pendingProcessStatus = null;
 }
 
+function submitProcess(formData) {
+    return fetchWithRetry('api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(r => r.json());
+}
+
 function confirmProcess() {
     if (!pendingProcessId || !pendingProcessStatus) return;
 
@@ -309,20 +329,43 @@ function confirmProcess() {
     formData.append('status', pendingProcessStatus);
     formData.append('note', note);
 
-    fetch('api.php', {
-        method: 'POST',
-        body: formData
-    })
-    .then(r => r.json())
+    const submitBtn = document.querySelector('#processNoteModal .btn-primary');
+    if (submitBtn) submitBtn.disabled = true;
+
+    submitProcess(formData)
     .then(data => {
         if (data.code === 0) {
             alert('操作成功');
             closeProcessNoteModal();
+            // 接口确认后再重载当前筛选视图
             location.reload();
-        } else {
-            alert(data.msg);
+        } else if (confirm(data.msg + '\n是否重试？（将保留当前筛选条件）')) {
+            return submitProcess(formData).then(data => {
+                if (data.code === 0) {
+                    alert('操作成功');
+                    closeProcessNoteModal();
+                    location.reload();
+                } else {
+                    alert(data.msg);
+                }
+            });
         }
-    });
+    })
+    .catch(error => {
+        console.error('处理举报失败:', error);
+        if (confirm('网络错误，操作未确认完成。\n是否重试？（将保留当前筛选条件）')) {
+            submitProcess(formData).then(data => {
+                if (data.code === 0) {
+                    alert('操作成功');
+                    closeProcessNoteModal();
+                    location.reload();
+                } else {
+                    alert(data.msg);
+                }
+            }).catch(() => alert('网络错误，请稍后重试'));
+        }
+    })
+    .finally(() => { if (submitBtn) submitBtn.disabled = false; });
 }
 
 document.getElementById('reportViewModal').addEventListener('click', function(e) {

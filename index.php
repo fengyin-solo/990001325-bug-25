@@ -25,8 +25,10 @@ if ($type && in_array($type, ['help', 'suggest', 'lost'])) {
     $params[] = $type;
 }
 
-// 排序
-$orderBy = ($sort === 'hot') ? "views DESC, created_at DESC" : "created_at DESC";
+// 排序（id 作为次序相同情况下的确定性补充排序，保证筛选/分页后序号稳定）
+$orderBy = ($sort === 'hot')
+    ? "views DESC, id DESC"
+    : "created_at DESC, id DESC";
 
 // 总数
 $countStmt = $db->prepare("SELECT COUNT(*) FROM messages $where");
@@ -44,12 +46,16 @@ $messages = $stmt->fetchAll();
 $favoritedIds = getFavoritedMessageIds();
 $favoritedIds = array_flip($favoritedIds);
 
-// 滚动数据（最新5条）
-$scrollStmt = $db->query("SELECT id, type, title, created_at FROM messages WHERE status = 1 ORDER BY created_at DESC LIMIT 8");
+// 滚动数据（最新8条）：与列表使用同一筛选条件，
+// 保证切换分类入口后滚动信息、统计数字与列表的处理结果完全一致
+$scrollSql = "SELECT id, type, title, created_at FROM messages $where ORDER BY created_at DESC, id DESC LIMIT 8";
+$scrollStmt = $db->prepare($scrollSql);
+$scrollStmt->execute($params);
 $scrollMessages = $scrollStmt->fetchAll();
 
-// 统计
-$statsStmt = $db->query("SELECT 
+// 统计：始终展示全部/求助/建议/失物的总数量，
+// 各分类卡片即分类入口，点击后与列表、滚动栏切换到相同结果
+$statsStmt = $db->query("SELECT
     COUNT(*) as total,
     SUM(CASE WHEN type='help' THEN 1 ELSE 0 END) as help_count,
     SUM(CASE WHEN type='suggest' THEN 1 ELSE 0 END) as suggest_count,
@@ -65,7 +71,7 @@ include __DIR__ . '/includes/header.php';
     <div class="container">
         <span class="scroll-label">📢 最新动态</span>
         <div class="scroll-wrapper">
-            <div class="scroll-content" id="scrollContent">
+            <div class="scroll-content" id="scrollContent" data-cloned="0">
                 <?php foreach ($scrollMessages as $msg): ?>
                 <a href="detail.php?id=<?= $msg['id'] ?>" class="scroll-item">
                     <span class="scroll-type"><?= getTypeIcon($msg['type']) ?></span>
@@ -78,26 +84,26 @@ include __DIR__ . '/includes/header.php';
     </div>
 </div>
 
-<!-- 统计卡片 -->
+<!-- 统计卡片（同时也是分类入口，点击后数字、滚动信息与列表按同一筛选结果更新） -->
 <section class="stats-section">
     <div class="container">
         <div class="stats-grid">
-            <div class="stat-card">
+            <a href="index.php?sort=<?= $sort ?>" class="stat-card stat-card-link <?= !$type ? 'active' : '' ?>">
                 <div class="stat-number"><?= $stats['total'] ?? 0 ?></div>
                 <div class="stat-label">全部留言</div>
-            </div>
-            <div class="stat-card stat-help">
+            </a>
+            <a href="index.php?sort=<?= $sort ?>&type=help" class="stat-card stat-card-link stat-help <?= $type === 'help' ? 'active' : '' ?>">
                 <div class="stat-number"><?= $stats['help_count'] ?? 0 ?></div>
                 <div class="stat-label">🆘 居民求助</div>
-            </div>
-            <div class="stat-card stat-suggest">
+            </a>
+            <a href="index.php?sort=<?= $sort ?>&type=suggest" class="stat-card stat-card-link stat-suggest <?= $type === 'suggest' ? 'active' : '' ?>">
                 <div class="stat-number"><?= $stats['suggest_count'] ?? 0 ?></div>
                 <div class="stat-label">💡 意见建议</div>
-            </div>
-            <div class="stat-card stat-lost">
+            </a>
+            <a href="index.php?sort=<?= $sort ?>&type=lost" class="stat-card stat-card-link stat-lost <?= $type === 'lost' ? 'active' : '' ?>">
                 <div class="stat-number"><?= $stats['lost_count'] ?? 0 ?></div>
                 <div class="stat-label">🔍 失物招领</div>
-            </div>
+            </a>
         </div>
     </div>
 </section>

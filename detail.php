@@ -10,8 +10,8 @@ if ($id <= 0) {
 
 $db = getDB();
 
-// 增加浏览量
-$db->prepare("UPDATE messages SET views = views + 1 WHERE id = ?")->execute([$id]);
+// 记录浏览量（无效/未通过留言不计数，重复访问去重），并取回最新浏览量
+$views = incrementMessageViews($db, $id);
 
 // 获取详情
 $stmt = $db->prepare("SELECT * FROM messages WHERE id = ? AND status = 1");
@@ -21,6 +21,11 @@ $msg = $stmt->fetch();
 if (!$msg) {
     header('Location: index.php');
     exit;
+}
+
+// 页面展示的浏览量与刚才的计数结果保持一致，避免与列表页对不上
+if ($views !== null) {
+    $msg['views'] = $views;
 }
 
 $pageTitle = cleanInput($msg['title']) . ' - 社区便民留言板';

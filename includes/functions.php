@@ -2,6 +2,21 @@
 session_start();
 
 /**
+ * 禁止浏览器缓存页面
+ *
+ * 留言可能被后台随时审核或删除，列表页、详情页等必须始终展示最新数据。
+ * 通过 no-store 头避免浏览器缓存，并配合前端 pageshow 处理 bfcache，
+ * 保证删除/审核后刷新或从其它入口进入时不会短暂看到旧内容。
+ */
+function sendNoCacheHeaders() {
+    header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+    header('Pragma: no-cache');
+    header('Expires: 0');
+}
+
+sendNoCacheHeaders();
+
+/**
  * 返回JSON响应
  */
 function jsonResponse($code, $msg, $data = null) {
@@ -225,6 +240,50 @@ function submitReport($messageId, $reportType, $description = '') {
     $stmt->execute([$messageId, $visitorId, $reportType, $description]);
 
     return $db->lastInsertId();
+}
+
+/**
+ * 记录一次留言浏览并返回最新浏览量
+ *
+ * 仅对存在且已通过审核的留言计数；同一访客在间隔期内重复打开
+ * （刷新、浏览器前进/后退）不重复计数，避免列表与详情、按时间与
+ * 按热度排序之间看到的浏览量前后不一致。
+ *
+ * @param PDO $db
+ * @param int $messageId
+ * @return int|null 最新浏览量；留言不存在或未通过审核时返回 null
+ */
+function incrementMessageViews($db, $messageId) {
+    $viewGapSeconds = 1800; // 同一访客 30 分钟内重复访问不重复计数
+
+    if (empty($_SESSION['viewed_messages']) || !is_array($_SESSION['viewed_messages'])) {
+        $_SESSION['viewed_messages'] = [];
+    }
+
+    $lastView = $_SESSION['viewed_messages'][$messageId] ?? 0;
+    $shouldCount = ($lastView < time() - $viewGapSeconds);
+
+    if ($shouldCount) {
+        // 只更新存在且已通过审核的留言，避免无效访问也累加浏览量
+        $stmt = $db->prepare("UPDATE messages SET views = views + 1 WHERE id = ? AND status = 1");
+        $stmt->execute([$messageId]);
+        if ($stmt->rowCount() === 0) {
+            return null;
+        }
+        $_SESSION['viewed_messages'][$messageId] = time();
+
+        // 清理超出间隔期的记录，避免会话无限增长
+        $threshold = time() - $viewGapSeconds;
+        foreach ($_SESSION['viewed_messages'] as $mid => $ts) {
+            if ($ts < $threshold) unset($_SESSION['viewed_messages'][$mid]);
+        }
+    }
+
+    $stmt = $db->prepare("SELECT views FROM messages WHERE id = ? AND status = 1");
+    $stmt->execute([$messageId]);
+    $views = $stmt->fetchColumn();
+
+    return $views === false ? null : (int) $views;
 }
 
 /**

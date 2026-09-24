@@ -99,10 +99,14 @@ a:hover { color: var(--primary-dark); }
 .scroll-content {
     display: flex;
     gap: 24px;
-    animation: scrollX 30s linear infinite;
     white-space: nowrap;
 }
-.scroll-content:hover { animation-play-state: paused; }
+/* 仅当内容溢出、JS 已复制一份并标记 is-scrolling 时才无缝滚动；
+   内容不足时保持静止，避免被 -50% 位移推出可视区域造成错位 */
+.scroll-content.is-scrolling {
+    animation: scrollX 30s linear infinite;
+}
+.scroll-content.is-scrolling:hover { animation-play-state: paused; }
 @keyframes scrollX {
     0% { transform: translateX(0); }
     100% { transform: translateX(-50%); }
@@ -139,6 +143,8 @@ a:hover { color: var(--primary-dark); }
 .stat-card.stat-help { border-top-color: var(--danger); }
 .stat-card.stat-suggest { border-top-color: var(--warning); }
 .stat-card.stat-lost { border-top-color: var(--info); }
+a.stat-card-link { display: block; text-decoration: none; color: inherit; }
+.stat-card.active { outline: 2px solid var(--primary); outline-offset: 0; }
 .stat-number { font-size: 2rem; font-weight: 800; color: var(--gray-800); }
 .stat-label { font-size: .85rem; color: var(--gray-500); margin-top: 4px; }
 
