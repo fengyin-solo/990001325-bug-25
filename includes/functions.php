@@ -1,5 +1,32 @@
 <?php
+// 所有页面（含 JSON 接口）均禁止缓存，避免后台删除/审核后浏览器或代理仍展示旧内容
+session_cache_limiter('nocache');
 session_start();
+
+/**
+ * 构建保留当前查看条件（筛选/排序/分页）的链接
+ * 筛选标签、统计卡片、分页等所有入口统一使用，保证不同入口参数完全一致
+ */
+function buildUrl(array $params = [], $base = null) {
+    if ($base === null) {
+        $base = basename($_SERVER['SCRIPT_NAME'] ?? 'index.php');
+    }
+    // 过滤空参数（如未选择分类时的 type=），但保留 0 等有意义的值
+    $params = array_filter($params, function ($v) {
+        return $v !== null && $v !== '';
+    });
+    return $base . ($params ? '?' . http_build_query($params) : '');
+}
+
+/**
+ * 安全的返回链接（仅允许站内列表页及其查询串）
+ */
+function safeBackUrl($url, $default = 'index.php') {
+    if (is_string($url) && preg_match('#\A(?:index|favorites)\.php(?:\?[A-Za-z0-9=&%_.\-~]+)?\z#u', $url)) {
+        return $url;
+    }
+    return $default;
+}
 
 /**
  * 返回JSON响应

@@ -1,13 +1,85 @@
 /**
  * 社区便民留言板 - 前端脚本
  */
-document.addEventListener('DOMContentLoaded', function() {
-    // 滚动信息复制实现无缝滚动
-    const scrollContent = document.getElementById('scrollContent');
-    if (scrollContent) {
-        scrollContent.innerHTML += scrollContent.innerHTML;
+
+/**
+ * 从 bfcache 恢复页面（浏览器后退/前进）时强制重新加载，
+ * 避免后台删除留言后，列表页/详情页短暂还原成已删除的旧内容
+ */
+window.addEventListener('pageshow', function(event) {
+    if (event.persisted) {
+        window.location.reload();
     }
 });
+
+document.addEventListener('DOMContentLoaded', function() {
+    initScroll();
+});
+
+/**
+ * 初始化无缝滚动
+ * 关键点：
+ * - 条目间距放在每个条目自身的 margin-right 上，复制后首尾间距一致，不会错位
+ * - 按实际宽度复制足够份数（至少两份），条目很少时也能填满容器无缝衔接
+ * - 用 WAAPI 按实际宽度驱动位移，而不是固定 translateX(-50%)
+ */
+function initScroll() {
+    const content = document.getElementById('scrollContent');
+    if (!content) return;
+
+    const items = Array.from(content.children);
+    if (items.length === 0) return;
+
+    const reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduceMotion) return;
+
+    let animation = null;
+
+    function setup() {
+        if (animation) {
+            animation.cancel();
+            animation = null;
+        }
+        // 重置为服务端渲染的原始条目后再复制，避免窗口变化时重复堆积
+        const originals = items.slice();
+        content.innerHTML = '';
+        originals.forEach(item => content.appendChild(item));
+
+        const wrapperWidth = content.parentElement.clientWidth;
+        // 第一组内容的总宽（含每条自身的右间距）
+        let setWidth = 0;
+        originals.forEach(item => { setWidth += item.offsetWidth; });
+        if (setWidth === 0) return;
+
+        // 至少复制一份；一组内容填不满容器时复制到能填满为止
+        const copies = Math.max(2, Math.ceil(wrapperWidth / setWidth) + 1);
+        for (let c = 1; c < copies; c++) {
+            originals.forEach(item => {
+                content.appendChild(item.cloneNode(true));
+            });
+        }
+
+        // 速度恒定：每像素 30/1200 秒（原动画约 30s 滚完一屏）
+        const duration = (setWidth / 1200) * 30000;
+        animation = content.animate(
+            [{ transform: 'translateX(0)' }, { transform: `translateX(-${setWidth}px)` }],
+            { duration: duration, iterations: Infinity, easing: 'linear' }
+        );
+    }
+
+    let resizeTimer = null;
+    window.addEventListener('resize', function() {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(setup, 200);
+    });
+
+    // 字体加载后条目宽度可能变化，字体就绪后计算一次；同时立即兜底执行一次
+    setup();
+    if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(setup);
+    }
+    window.addEventListener('load', setup);
+}
 
 /**
  * 切换收藏状态
@@ -53,17 +125,17 @@ function toggleFavorite(event, btn) {
                 text.textContent = '收藏';
                 showToast(result.msg, 'info');
 
+                // 以接口成功返回为前提再刷新；刷新保留当前筛选/排序/页码，
+                // 列表与统计数字统一由服务端重新计算，不会残留旧内容或出现数字漂移
                 if (window.location.pathname.includes('favorites.php')) {
                     const card = btn.closest('.message-card');
                     if (card) {
                         card.style.transition = 'all 0.3s ease';
                         card.style.opacity = '0';
                         card.style.transform = 'translateX(-100px)';
-                        setTimeout(() => {
-                            card.remove();
-                            updateFavoritesStats();
-                            checkEmptyState();
-                        }, 300);
+                        setTimeout(() => window.location.reload(), 300);
+                    } else {
+                        window.location.reload();
                     }
                 }
             }
@@ -84,50 +156,6 @@ function toggleFavorite(event, btn) {
     .finally(() => {
         btn.disabled = false;
     });
-}
-
-/**
- * 更新收藏页面统计数据
- */
-function updateFavoritesStats() {
-    const statNumbers = document.querySelectorAll('.favorites-stats .stat-number');
-    statNumbers.forEach(el => {
-        const current = parseInt(el.textContent) || 0;
-        if (current > 0) {
-            el.textContent = current - 1;
-        }
-    });
-
-    const subtitle = document.querySelector('.page-subtitle');
-    if (subtitle) {
-        const match = subtitle.textContent.match(/\d+/);
-        if (match) {
-            const current = parseInt(match[0]) || 0;
-            subtitle.textContent = `共收藏 ${Math.max(0, current - 1)} 条留言`;
-        }
-    }
-}
-
-/**
- * 检查收藏页面是否为空
- */
-function checkEmptyState() {
-    const list = document.querySelector('.message-list');
-    if (!list) return;
-
-    const cards = list.querySelectorAll('.message-card');
-    if (cards.length === 0) {
-        const container = document.querySelector('.message-list-section .container');
-        if (container) {
-            container.innerHTML = `
-                <div class="empty-state">
-                    <div class="empty-icon">⭐</div>
-                    <p>暂无收藏的留言</p>
-                    <a href="index.php" class="btn btn-primary">去浏览留言</a>
-                </div>
-            `;
-        }
-    }
 }
 
 /**

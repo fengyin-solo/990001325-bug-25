@@ -15,7 +15,6 @@ $reportType = $_GET['report_type'] ?? '';
 $keyword = trim($_GET['keyword'] ?? '');
 $page = max(1, intval($_GET['page'] ?? 1));
 $pageSize = 15;
-$offset = ($page - 1) * $pageSize;
 
 $where = "WHERE 1=1";
 $params = [];
@@ -38,15 +37,27 @@ if ($keyword) {
 
 $countStmt = $db->prepare("SELECT COUNT(*) FROM reports r LEFT JOIN messages m ON r.message_id = m.id $where");
 $countStmt->execute($params);
-$total = $countStmt->fetchColumn();
-$totalPages = ceil($total / $pageSize);
+$total = (int) $countStmt->fetchColumn();
+$totalPages = max(1, (int) ceil($total / $pageSize));
 
-$sql = "SELECT r.*, m.title as message_title, m.nickname as message_nickname, m.type as message_type, a.username as admin_name 
-        FROM reports r 
-        LEFT JOIN messages m ON r.message_id = m.id 
-        LEFT JOIN admins a ON r.processed_by = a.id 
-        $where 
-        ORDER BY r.created_at DESC 
+// 处理后记录数减少时回到最后一页，筛选条件保持不变
+if ($page > $totalPages) {
+    header('Location: ' . buildUrl([
+        'status' => $status,
+        'report_type' => $reportType,
+        'keyword' => $keyword,
+        'page' => $totalPages,
+    ]));
+    exit;
+}
+$offset = ($page - 1) * $pageSize;
+
+$sql = "SELECT r.*, m.title as message_title, m.nickname as message_nickname, m.type as message_type, a.username as admin_name
+        FROM reports r
+        LEFT JOIN messages m ON r.message_id = m.id
+        LEFT JOIN admins a ON r.processed_by = a.id
+        $where
+        ORDER BY r.created_at DESC, r.id DESC
         LIMIT $pageSize OFFSET $offset";
 $stmt = $db->prepare($sql);
 $stmt->execute($params);
@@ -265,6 +276,9 @@ function viewReport(id) {
         } else {
             document.getElementById('reportViewBody').innerHTML = data.msg;
         }
+    })
+    .catch(() => {
+        document.getElementById('reportViewBody').innerHTML = '加载失败，请关闭后重试';
     });
 }
 
@@ -303,6 +317,9 @@ function confirmProcess() {
     if (!pendingProcessId || !pendingProcessStatus) return;
 
     const note = document.getElementById('processNote').value;
+    const submitBtn = document.querySelector('#processNoteModal .btn-primary');
+    submitBtn.disabled = true;
+
     const formData = new FormData();
     formData.append('action', 'process_report');
     formData.append('id', pendingProcessId);
@@ -318,10 +335,16 @@ function confirmProcess() {
         if (data.code === 0) {
             alert('操作成功');
             closeProcessNoteModal();
-            location.reload();
+            window.location.reload();
         } else {
-            alert(data.msg);
+            // 失败时保留弹窗、备注与处理状态，允许直接重试
+            alert(data.msg || '操作失败，请稍后重试');
+            submitBtn.disabled = false;
         }
+    })
+    .catch(() => {
+        alert('网络错误，操作未完成，请稍后重试');
+        submitBtn.disabled = false;
     });
 }
 

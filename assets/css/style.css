@@ -98,14 +98,8 @@ a:hover { color: var(--primary-dark); }
 .scroll-wrapper { overflow: hidden; flex: 1; position: relative; }
 .scroll-content {
     display: flex;
-    gap: 24px;
-    animation: scrollX 30s linear infinite;
     white-space: nowrap;
-}
-.scroll-content:hover { animation-play-state: paused; }
-@keyframes scrollX {
-    0% { transform: translateX(0); }
-    100% { transform: translateX(-50%); }
+    will-change: transform;
 }
 .scroll-item {
     display: inline-flex;
@@ -115,6 +109,7 @@ a:hover { color: var(--primary-dark); }
     font-size: .85rem;
     white-space: nowrap;
     padding: 4px 12px;
+    margin-right: 24px;
     border-radius: 20px;
     background: var(--gray-50);
     transition: var(--transition);
@@ -127,6 +122,7 @@ a:hover { color: var(--primary-dark); }
 .stats-section { padding: 24px 0; }
 .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .stat-card {
+    display: block;
     background: #fff;
     border-radius: var(--radius);
     padding: 24px;
@@ -134,11 +130,20 @@ a:hover { color: var(--primary-dark); }
     box-shadow: var(--shadow);
     border-top: 3px solid var(--primary);
     transition: var(--transition);
+    color: inherit;
+    text-decoration: none;
+    cursor: pointer;
 }
 .stat-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-lg); }
+.stat-card.active {
+    box-shadow: 0 0 0 2px var(--primary), var(--shadow);
+}
 .stat-card.stat-help { border-top-color: var(--danger); }
+.stat-card.stat-help.active { box-shadow: 0 0 0 2px var(--danger), var(--shadow); }
 .stat-card.stat-suggest { border-top-color: var(--warning); }
+.stat-card.stat-suggest.active { box-shadow: 0 0 0 2px var(--warning), var(--shadow); }
 .stat-card.stat-lost { border-top-color: var(--info); }
+.stat-card.stat-lost.active { box-shadow: 0 0 0 2px var(--info), var(--shadow); }
 .stat-number { font-size: 2rem; font-weight: 800; color: var(--gray-800); }
 .stat-label { font-size: .85rem; color: var(--gray-500); margin-top: 4px; }
 

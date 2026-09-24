@@ -10,18 +10,22 @@ if ($id <= 0) {
 
 $db = getDB();
 
-// 增加浏览量
-$db->prepare("UPDATE messages SET views = views + 1 WHERE id = ?")->execute([$id]);
-
-// 获取详情
+// 先确认留言存在且已通过审核；已删除/未通过时不加浏览量，直接回到来源列表
 $stmt = $db->prepare("SELECT * FROM messages WHERE id = ? AND status = 1");
 $stmt->execute([$id]);
 $msg = $stmt->fetch();
 
 if (!$msg) {
-    header('Location: index.php');
+    $backUrl = safeBackUrl($_GET['back'] ?? '');
+    header('Location: ' . $backUrl);
     exit;
 }
+
+// 浏览量自增后重新取数，保证详情页与列表（按热度/按时间）显示的浏览量一致
+$db->prepare("UPDATE messages SET views = views + 1 WHERE id = ? AND status = 1")->execute([$id]);
+$msg['views'] = (int) $msg['views'] + 1;
+
+$backUrl = safeBackUrl($_GET['back'] ?? '');
 
 $pageTitle = cleanInput($msg['title']) . ' - 社区便民留言板';
 $currentPage = '';
@@ -62,7 +66,7 @@ include __DIR__ . '/includes/header.php';
             <?php endif; ?>
 
             <div class="detail-actions">
-                <a href="index.php" class="btn btn-secondary">← 返回列表</a>
+                <a href="<?= cleanInput($backUrl) ?>" class="btn btn-secondary">← 返回列表</a>
                 <?php $isFav = isFavorited($msg['id']); ?>
                 <button class="btn favorite-detail-btn <?= $isFav ? 'btn-warning' : 'btn-secondary' ?>" data-message-id="<?= $msg['id'] ?>" onclick="toggleFavorite(event, this)">
                     <span class="favorite-icon"><?= $isFav ? '⭐' : '☆' ?></span>

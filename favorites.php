@@ -10,15 +10,14 @@ $jsPath = 'assets/js/main.js';
 $db = getDB();
 $visitorId = getVisitorId();
 
-$type = $_GET['type'] ?? '';
+$type = in_array($_GET['type'] ?? '', ['help', 'suggest', 'lost'], true) ? $_GET['type'] : '';
 $page = max(1, intval($_GET['page'] ?? 1));
 $pageSize = 10;
-$offset = ($page - 1) * $pageSize;
 
 $where = "WHERE f.visitor_id = ? AND m.status = 1";
 $params = [$visitorId];
 
-if ($type && in_array($type, ['help', 'suggest', 'lost'])) {
+if ($type) {
     $where .= " AND m.type = ?";
     $params[] = $type;
 }
@@ -26,14 +25,21 @@ if ($type && in_array($type, ['help', 'suggest', 'lost'])) {
 $countSql = "SELECT COUNT(*) FROM favorites f INNER JOIN messages m ON f.message_id = m.id $where";
 $countStmt = $db->prepare($countSql);
 $countStmt->execute($params);
-$total = $countStmt->fetchColumn();
-$totalPages = ceil($total / $pageSize);
+$total = (int) $countStmt->fetchColumn();
+$totalPages = max(1, (int) ceil($total / $pageSize));
 
-$sql = "SELECT m.id, m.nickname, m.type, m.title, m.content, m.image, m.views, m.created_at, f.created_at as favorited_at 
-        FROM favorites f 
-        INNER JOIN messages m ON f.message_id = m.id 
-        $where 
-        ORDER BY f.created_at DESC 
+// 取消收藏后页码可能超出范围，回到最后一页
+if ($page > $totalPages) {
+    header('Location: ' . buildUrl(['type' => $type, 'page' => $totalPages], 'favorites.php'));
+    exit;
+}
+$offset = ($page - 1) * $pageSize;
+
+$sql = "SELECT m.id, m.nickname, m.type, m.title, m.content, m.image, m.views, m.created_at, f.created_at as favorited_at
+        FROM favorites f
+        INNER JOIN messages m ON f.message_id = m.id
+        $where
+        ORDER BY f.created_at DESC, f.id DESC
         LIMIT $pageSize OFFSET $offset";
 $stmt = $db->prepare($sql);
 $stmt->execute($params);
@@ -104,7 +110,7 @@ include __DIR__ . '/includes/header.php';
         <div class="message-list">
             <?php foreach ($favorites as $msg): ?>
             <div class="message-card">
-                <a href="detail.php?id=<?= $msg['id'] ?>" class="card-link">
+                <a href="detail.php?id=<?= $msg['id'] ?>&back=<?= urlencode(buildUrl(['type' => $type, 'page' => $page], 'favorites.php')) ?>" class="card-link">
                     <div class="card-header">
                         <span class="card-type type-<?= $msg['type'] ?>"><?= getTypeIcon($msg['type']) ?> <?= getTypeLabel($msg['type']) ?></span>
                         <span class="card-time">收藏于 <?= timeAgo($msg['favorited_at']) ?></span>
@@ -138,6 +144,7 @@ include __DIR__ . '/includes/header.php';
             <?php if ($page < $totalPages): ?>
             <a href="favorites.php?page=<?= $page + 1 ?>&type=<?= $type ?>" class="page-btn">下一页</a>
             <?php endif; ?>
+            <span class="page-info">共 <?= $total ?> 条</span>
         </div>
         <?php endif; ?>
         <?php endif; ?>

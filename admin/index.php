@@ -16,7 +16,6 @@ $type = $_GET['type'] ?? '';
 $keyword = trim($_GET['keyword'] ?? '');
 $page = max(1, intval($_GET['page'] ?? 1));
 $pageSize = 15;
-$offset = ($page - 1) * $pageSize;
 
 $where = "WHERE 1=1";
 $params = [];
@@ -39,10 +38,19 @@ if ($keyword) {
 
 $countStmt = $db->prepare("SELECT COUNT(*) FROM messages $where");
 $countStmt->execute($params);
-$total = $countStmt->fetchColumn();
-$totalPages = ceil($total / $pageSize);
+$total = (int) $countStmt->fetchColumn();
+$totalPages = max(1, (int) ceil($total / $pageSize));
 
-$sql = "SELECT * FROM messages $where ORDER BY created_at DESC LIMIT $pageSize OFFSET $offset";
+// 删除/审核后记录减少，超出页码时回到最后一页，筛选条件保持不变
+if ($page > $totalPages) {
+    $redirect = buildUrl(['status' => $status, 'type' => $type, 'keyword' => $keyword, 'page' => $totalPages]);
+    header('Location: ' . $redirect);
+    exit;
+}
+$offset = ($page - 1) * $pageSize;
+
+// id 作为唯一决胜键，筛选、翻页、删除后行序与序号保持稳定
+$sql = "SELECT * FROM messages $where ORDER BY created_at DESC, id DESC LIMIT $pageSize OFFSET $offset";
 $stmt = $db->prepare($sql);
 $stmt->execute($params);
 $messages = $stmt->fetchAll();
@@ -174,37 +182,42 @@ include __DIR__ . '/header.php';
 function auditMessage(id, status) {
     const action = status === 1 ? '通过' : '拒绝';
     if (!confirm('确定要' + action + '这条留言吗？')) return;
-    fetch('api.php', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'action=audit&id=' + id + '&status=' + status
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.code === 0) {
-            alert('操作成功');
-            location.reload();
-        } else {
-            alert(data.msg);
-        }
-    });
+    postAction('audit', id, {status: status}, '操作成功');
 }
 
 function deleteMessage(id) {
     if (!confirm('确定要删除这条留言吗？此操作不可恢复！')) return;
+    postAction('delete', id, {}, '删除成功');
+}
+
+/**
+ * 后台操作统一入口：
+ * - 接口成功返回后才整页刷新（自动保留当前筛选/搜索/页码条件）
+ * - 失败或网络异常时保留当前页面内容与查看条件，按钮恢复可用以便重试
+ */
+function postAction(action, id, extraParams, okMsg) {
+    const btns = document.querySelectorAll('.td-actions .btn');
+    btns.forEach(btn => { btn.disabled = true; });
+
+    const params = new URLSearchParams(Object.assign({action: action, id: id}, extraParams));
     fetch('api.php', {
         method: 'POST',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: 'action=delete&id=' + id
+        body: params.toString()
     })
     .then(r => r.json())
     .then(data => {
         if (data.code === 0) {
-            alert('删除成功');
-            location.reload();
+            alert(okMsg);
+            window.location.reload();
         } else {
-            alert(data.msg);
+            alert(data.msg || '操作失败，请稍后重试');
+            btns.forEach(btn => { btn.disabled = false; });
         }
+    })
+    .catch(() => {
+        alert('网络错误，操作未完成，请稍后重试（当前筛选条件已保留）');
+        btns.forEach(btn => { btn.disabled = false; });
     });
 }
 
@@ -231,6 +244,9 @@ function viewMessage(id) {
         } else {
             document.getElementById('modalBody').innerHTML = data.msg;
         }
+    })
+    .catch(() => {
+        document.getElementById('modalBody').innerHTML = '加载失败，请关闭后重试';
     });
 }
 
